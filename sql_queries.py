@@ -1,5 +1,4 @@
 import configparser
-import psycopg2
 
 # CONFIG
 config = configparser.ConfigParser()
@@ -21,7 +20,7 @@ time_table_drop = "DROP TABLE IF EXISTS time"
 
 # CREATE TABLES
 
-staging_events_table_create= """
+staging_events_table_create= ("""
 CREATE TABLE IF NOT EXISTS staging_events (
 
     artist VARCHAR,
@@ -36,22 +35,22 @@ CREATE TABLE IF NOT EXISTS staging_events (
     method VARCHAR,
     page VARCHAR,
     registration FLOAT,
-    sessionid INTEGER,
+    session_id INTEGER,
     song VARCHAR,
     status INTEGER,
     ts BIGINT,
     useragent VARCHAR,
-    userid FLOAT
+    user_id INTEGER
 );
-"""
+""")
 
 staging_songs_table_create = """
 CREATE TABLE IF NOT EXISTS staging_songs (
     song_id TEXT PRIMARY KEY,
     title VARCHAR(1024),
     duration FLOAT,
-    year FLOAT,
-    num_songs FLOAT,
+    year INTEGER,
+    num_songs INTEGER,
     artist_id TEXT,
     artist_name VARCHAR(1024),
     artist_latitude FLOAT,
@@ -63,33 +62,33 @@ CREATE TABLE IF NOT EXISTS staging_songs (
 songplay_table_create = """
 CREATE TABLE IF NOT EXISTS songplays (
     songplay_id INTEGER IDENTITY(0,1) PRIMARY KEY,
-    start_time INTEGER NOT NULL REFERENCES time(start_time) sortkey,
-    user_id INTEGER NOT NULL REFERENCES users(user_id),
-    level VARCHAR NOT NULL,
-    song_id VARCHAR NOT NULL REFERENCES songs(song_id) distkey,
-    artist_id VARCHAR NOT NULL REFERENCES artists(artist_id),
-    session_id INTEGER NOT NULL,
-    location VARCHAR NOT NULL,
-    user_agent VARCHAR NOT NULL
+    start_time TIMESTAMP sortkey,
+    user_id INTEGER,
+    level VARCHAR,
+    song_id VARCHAR  distkey,
+    artist_id VARCHAR,
+    session_id INTEGER,
+    location VARCHAR,
+    user_agent VARCHAR
 );
 """
 
-user_table_create = """
+user_table_create = ("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER NOT NULL PRIMARY KEY,
-    first_name VARCHAR NOT NULL,
-    last_name VARCHAR NOT NULL,
-    gender VARCHAR NOT NULL,
-    level VARCHAR NOT NULL
+    first_name VARCHAR,
+    last_name VARCHAR,
+    gender VARCHAR,
+    level VARCHAR
 ) DISTSTYLE all;
-"""
+""")
 
 
 song_table_create = """
 CREATE TABLE IF NOT EXISTS songs (
     song_id VARCHAR NOT NULL PRIMARY KEY,
-    title VARCHAR NOT NULL,
-    artist_id VARCHAR NOT NULL REFERENCES artists(artist_id) sortkey distkey,
+    title VARCHAR,
+    artist_id VARCHAR NOT NULL sortkey distkey,
     year INTEGER, 
     duration FLOAT
 );
@@ -98,7 +97,7 @@ CREATE TABLE IF NOT EXISTS songs (
 artist_table_create = """
 CREATE TABLE IF NOT EXISTS artists (
     artist_id VARCHAR NOT NULL PRIMARY KEY,
-    name VARCHAR NOT NULL,
+    name VARCHAR,
     location VARCHAR,
     latitude FLOAT,
     longitude FLOAT
@@ -108,13 +107,13 @@ CREATE TABLE IF NOT EXISTS artists (
 
 time_table_create = """
 CREATE TABLE IF NOT EXISTS time (
-    start_time INTEGER NOT NULL PRIMARY KEY, 
-    hour INTEGER NOT NULL, 
-    day INTEGER NOT NULL,
-    week INTEGER NOT NULL,
-    month INTEGER NOT NULL,
-    year INTEGER NOT NULL,
-    weekday INTEGER NOT NULL
+    start_time TIMESTAMP NOT NULL PRIMARY KEY, 
+    hour INTEGER, 
+    day INTEGER,
+    week INTEGER,
+    month VARCHAR,
+    year INTEGER,
+    weekday VARCHAR 
 ) DISTSTYLE all;
 """
 
@@ -124,29 +123,59 @@ CREATE TABLE IF NOT EXISTS time (
 # STAGING TABLES
 
 staging_events_copy = ("""
-""").format()
+    copy staging_events
+    from {}
+    iam_role {}
+    json {}
+""").format(config['S3']['LOG_DATA'], config['IAM_ROLE']['ARN'], config['S3']['LOG_JSONPATH'])
 
 staging_songs_copy = ("""
-""").format()
-
+    copy staging_songs
+    from {}
+    iam_role {}
+    json 'auto'
+""").format(config['S3']['SONG_DATA'], config['IAM_ROLE']['ARN'])
 
 
 
 # FINAL TABLES
 
 songplay_table_insert = ("""
+    INSERT INTO songplays (start_time, user_id, level, song_id, artist_id, session_id, location, user_agent)
+    SELECT events.start_time, events.user_id, events.level, songs.song_id, songs.artist_id, events.session_id, events.location, events.useragent
+    FROM (SELECT TIMESTAMP 'epoch' + ts/1000 * interval '1 second' AS start_time, *
+          FROM staging_events
+          WHERE page='NextSong') events
+    LEFT JOIN staging_songs songs
+    ON events.song = songs.title
+    AND events.artist = songs.artist_name
+    AND events.length = songs.duration
 """)
 
 user_table_insert = ("""
+    INSERT INTO users (user_id, first_name, last_name, gender, level)
+    SELECT distinct user_id, firstname, lastname, gender, level
+    FROM staging_events
+    WHERE page='NextSong'
 """)
 
 song_table_insert = ("""
+    INSERT INTO songs (song_id, title, artist_id, year, duration)
+    SELECT distinct song_id, title, artist_id, year, duration
+    FROM staging_songs
 """)
 
 artist_table_insert = ("""
+    INSERT INTO artists (artist_id, name, location, latitude, longitude)
+    SELECT distinct artist_id, artist_name, artist_location, artist_latitude, artist_longitude
+    FROM staging_songs
 """)
 
 time_table_insert = ("""
+    INSERT INTO time (start_time, hour, day, week, month, year, weekday)
+    SELECT distinct start_time, extract(hour from start_time), extract(day from start_time), extract(week from start_time), 
+           extract(month from start_time), extract(year from start_time), extract(dayofweek from start_time)
+    FROM songplays
 """)
 
 

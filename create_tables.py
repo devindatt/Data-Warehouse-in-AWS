@@ -1,6 +1,6 @@
 import configparser
 import psycopg2
-from sql_queries import create_table_queries, drop_table_queries
+from sql_queries import create_table_queries, drop_table_queries, copy_table_queries, insert_table_queries 
 import pandas as pd
 import json
 
@@ -16,6 +16,7 @@ def create_tables(cur, conn):
         cur.execute(query)
         conn.commit()
 
+        
 
 def main():
     config = configparser.ConfigParser()
@@ -46,6 +47,8 @@ def main():
 
 
 #----------------------------------------------------------------------
+#Creating the AWS resources
+
     import boto3
 
     ec2 = boto3.resource('ec2',
@@ -74,6 +77,8 @@ def main():
     
     
 #----------------------------------------------------------------------
+#Creating the IAM role and attaching the appropriate policy
+
     from botocore.exceptions import ClientError
 
     #1.1 Create the role, 
@@ -104,25 +109,6 @@ def main():
 
     print(roleArn)
 
-
-#----------------------------------------------------------------------
-#
-#    response = iam.get_role(RoleName=DWH_IAM_ROLE_NAME)['Role']['Arn']
-
-   
-#----------------------------------------------------------------------
-    # Attach Policy
-#    print('1.2 Attaching Policy')
-#    iam.attach_role_policy(RoleName = DWH_IAM_ROLE_NAME,
-#                           PolicyArn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
-#                          ) ['ResponseMetadata']  ['HTTPStatusCode']
-
-#----------------------------------------------------------------------
-    # Get and print the IAM role ARN
-
-#    print("1.3 Get the IAM role ARN")
-#    roleArn = iam.get_role(RoleName=DWH_IAM_ROLE_NAME)['Role']['Arn']
-#    print(roleArn)    
 
 #----------------------------------------------------------------------
     try:
@@ -157,10 +143,10 @@ def main():
     prettyRedshiftProps(myClusterProps)
 
 #----------------------------------------------------------------------
-#    DWH_ENDPOINT = myClusterProps['Endpoint']['Address']
-#    DWH_ROLE_ARN = myClusterProps['IamRoles'][0]['IamRoleArn']
-#    print("DWH_ENDPOINT :: ", DWH_ENDPOINT)
-#    print("DWH_ROLE_ARN :: ", roleArn)
+    DWH_ENDPOINT = myClusterProps['Endpoint']['Address']
+    DWH_ROLE_ARN = myClusterProps['IamRoles'][0]['IamRoleArn']
+    print("DWH_ENDPOINT :: ", DWH_ENDPOINT)
+    print("DWH_ROLE_ARN :: ", roleArn)
 #----------------------------------------------------------------------
     try:
         vpc = ec2.Vpc(id=myClusterProps['VpcId'])
@@ -176,21 +162,30 @@ def main():
         )
     except Exception as e:
         print(e)
-
-
-
-#----------------------------------------------------------------------
 #----------------------------------------------------------------------
 
     
     
     
-    print(*config['CLUSTER'].values())
+    print("Using these parameters to connect to database: ")
+    print("----->" +  *config['CLUSTER'].values())
+    print("\n")
+
     conn = psycopg2.connect("host={} dbname={} user={} password={} port={}".format(*config['CLUSTER'].values()))
     cur = conn.cursor()
 
+
+    print("Dropping any existing tables in database")
     drop_tables(cur, conn)
+    print("   All tables dropped in database!")
+    print("\n")
+
+
+    print("Recreating all new tables in database")
     create_tables(cur, conn)
+    print("   All tables created in database, ready load the data into S3!")
+    print("\n")
+
 
     conn.close()
 
